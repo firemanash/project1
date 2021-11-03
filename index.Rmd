@@ -1,0 +1,166 @@
+---
+title: 'Project 1: Wrangling, Exploration, Visualization'
+author: "SDS322E, David Yang"
+date: '11/1/2021'
+output:
+  html_document:
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+  pdf_document:
+    toc: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F,
+tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
+```
+
+## Data Wrangling, Exploration, Visualization
+
+### David Yang dy4652
+
+#### Introduction 
+
+
+The first dataset, uniSalaries, shows average salaries from different universities in the USA. The salaries are split by percentiles
+as well as median. The universities are categorized into what "type" of school they are. The second dataset, uniRanks, displays universities' rankings gathered from The Center for World University Ranking. Universities are ranked in several different criteria in on a national scale, with 1 being the best. Both datasets were acquired through Kaggle.
+As someone who has been through the college admissions process and might do so again in the future, I thought of this as a fun/interesting dataset to analyze and it would be interesting to see how salaries and school type may align with school ranking. The data is not perfect since data is gathered from different times, but the year gap is at most a couple of years so I thought the results would still be relevant. I performed some modifications to the data before "tidying" and joining to include moer data and filter out irrelevant info.
+
+```{R}
+library(tidyverse)
+library(gt)
+uniSalaries<- read.csv("collegeSalaries.csv")
+uniRanks <- read.csv("cwurData.csv")
+uniSalaries <- uniSalaries %>% rename(institution = School.Name)
+uniSalaries <- uniSalaries %>% mutate(institution = str_replace(institution, " \\(.+\\)", ""))
+uniRanks <- uniRanks %>% filter(year == 2015)
+uniRanks <- uniRanks %>% select(-c(country, year))
+
+```
+
+#### Tidying: Reshaping
+
+If your datasets are tidy already, demonstrate that you can reshape data with pivot wider/longer here (e.g., untidy and then retidy). Alternatively, it may be easier to wait until the wrangling section so you can reshape your summary statistics. Note here if you are going to do this.
+
+```{R}
+uniSalaries <- uniSalaries %>% pivot_longer(3:8, names_to="percentile", values_to="salary") %>% 
+  mutate(percentile = str_replace(percentile, "Career.", "")) %>%
+  separate(percentile, into=c("career_stage", "percentile"), sep="\\.")
+uniSalaries <- uniSalaries %>% mutate(salary = str_replace(salary, "\\$", "")) %>% mutate(salary = str_replace(salary, ",", "")) %>%
+  mutate(salary = as.numeric(salary)) %>% mutate(School.Type = as.character(School.Type))
+
+```
+
+Since salary percentile/median and career time were 2 variables that were spread throughout the columns in uniSalaries, I decided to pivot these into their own columns with the value for "career_stage" being either mid or starting, and the "percentile" column being one of the percentiles or the median.
+
+
+    
+#### Joining/Merging
+
+```{R}
+uniSalaries %>% nrow()
+uniSalaries %>% n_distinct
+uniSalaries %>% distinct(institution)
+uniRanks %>% nrow()
+uniRanks %>% n_distinct
+uniRanks %>% left_join(uniSalaries) %>% filter (is.na(School.Type)) %>% distinct(institution)
+uniSalaries %>% left_join(uniRanks) %>% filter (is.na(world_rank)) %>% distinct(institution)
+merged <- uniSalaries %>% inner_join(uniRanks)
+merged %>% distinct(institution)
+```
+
+Since I already did renaming and string replacing earlier before tidying, 
+the only step left was for me to join the two datasets. Earlier, I removed
+any parentheses and dashes from the uniSalaries to match the uniRanks
+institution names. While this does not ensure that every institution
+will have the same naming style in both datasets, this str_replace covers
+most of the cases. Lastly I changed the col name of "School.Name" in uniSalaries to "institution" to match the col name in the uniRanks datset.
+The tidied uniSalaries dataset has 1614 ID's and uniRanks has 1000 ID's. There are 907 universities that belong in uniRanks but does not belong in uniSalaries. There are 156 univerisites that belong in uniSalaries but not in uniRanks.
+
+I used inner join as I thought the only data observations we want are ones where we have information on both universities from both datasets. The new dataset 'merged' has 618 rows and 16 columns so many univerisites (especially non-US universities) were filtered out. The merged dataset has only 93 institutions so 156 universities were dropped from uniSalaries and 907 from uniRanks, which is an appreciable concern as some school types may not have a lot of observations and this can lead to skewed statistics.
+
+####  Wrangling
+
+```{R}
+merged %>% mutate(salary_rank = rank(-salary)) %>% arrange(salary_rank)
+merged %>% summarise_if(is_numeric, mean, na.rm=T)
+merged %>% summarise_if(is_numeric, n_distinct)
+merged %>% summarise_if(negate(is_numeric), n_distinct)
+merged %>% group_by(School.Type) %>% summarise_if(is_numeric, median, na.rm=T)
+merged %>% group_by(School.Type) %>% filter(percentile=="Median") %>% summarise_if(is_numeric, max, na.rm=T)
+median_deviate<- function(x) {
+  y = mean(x-median(x, na.rm=T), na.rm=T)
+  return (y)
+}
+merged %>% group_by(School.Type, percentile, career_stage) %>% summarise_if(is_numeric, median_deviate)
+merged %>% summarise_all(funs(sum(is.na(.))))
+merged %>% filter(str_detect(institution, "Technology")) %>% summarise(mean(salary,na.rm=T))
+merged %>% filter(str_detect(institution, "Technology")) %>%
+  gt() %>% tab_header(title=md("**Summary Statistics**"),
+             subtitle=md("A table of salary and ranking statistics for univerisites with 'Technology'"))
+```
+
+First, I created a new column using the salaries column that ranks salaries, with 1 being the highest salary. Perhaps not too surprisingly, most of the highest salaries are in the mid career stage in the ivy leagues, with Yale, Dartmouth, and Harvard taking the top 3 spots. Their 90 percentile salaries are $326,000, $321,000 and $288,000, respectively.
+
+Next, I used summarise_if on the numeric columns to calculate the mean and distinct values. I also found the distinct values for the categorical values as well.
+
+I grouped by school types and found the medians for all the values for each school type. I also grouped by school types and filtered out for only median salaries and found the max values of numeric variables. Ivy league schools unsurprisingly had the highest (lowest #) median ranks in all categories and had the highest median salary. Engineering schools followed in median salary.  I created a function called median_deviate that calculates how much less or greater a variable is from its median. I then grouped the data by school type, percentile, and career stage and summarised all the numeric variables using median_deviate.  
+
+I calculated all the NA values of each column, of which there are only 2 of in the 'salary' column. I filtered out schools only with 'technology' in the name and calculated the mean salary, of which it is $105,260.70.
+
+#### Visualizing
+
+```{R}
+ggplot(merged, aes(x=world_rank, y=publications)) +
+  geom_point(aes(color=School.Type)) +
+  geom_smooth(aes(color=School.Type)) +
+  ggtitle("World Ranks vs Publication Ranks") + 
+  xlab("World Rank") + 
+  ylab("Publication Rank") + 
+  labs(color="School Type") + 
+  scale_y_continuous(breaks=seq(0,1000,100)) + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle=45, hjust=1)) + 
+  scale_x_continuous(breaks=seq(0,1250,50))
+```
+
+Plot 1 shows how world rank correlates with publication rank. For most school types there is an apparent positive correlation between world rank and publication rank. The ivy league school types fluctuate a bit more than the other school types but there is still somewhat of a positive positive correlation. State schools on the other hand fluctuate the least, with world rank and publication rank being quite aligned.
+
+```{R}
+
+ggplot(merged, aes(x=School.Type, y=quality_of_education, fill=School.Type)) +
+    geom_violin() + 
+    geom_boxplot(width=.1, alpha = .3) +
+    xlab("School Type") + 
+    ylab("Quality of Education Rank") +
+    ggtitle("Quality of Education Rank Distributions of Different School Types") +
+    scale_y_continuous(breaks=seq(0,400,50)) + theme_dark() + 
+    theme(legend.position = "none")
+  
+```
+
+This is a box plot superpositioned over a violin plot showing how the distribution quality of education ranks differ among different schiool types. There is probably not enough data for liberal arts to make any conclusions but most other schools except ivy leauge schools have a wide range in the quality of education rank. Party and state schools tend to have a slight higher distribution in the higher ranks within their range while ivy league schools are more concentrated in the lower ranks of their school type's range. 
+
+```{R}
+ggplot(merged, aes(x=School.Type, y = salary)) +
+  geom_bar(stat="summary", fun=mean, aes(fill=School.Type)) +
+  geom_errorbar(stat="summary", fun.data=mean_se, width = .5)  +
+  theme_dark() + 
+  theme(legend.position = "none") +
+  coord_flip() + 
+  xlab("School Type") + 
+  ylab("Salary ($)") +
+  ggtitle("Mean Salaries of Different School Types") + 
+  scale_y_continuous(breaks=seq(0,160000,10000)) +
+    theme(axis.text.x = element_text(angle=45, hjust=1))
+  
+
+```
+This is a horizontal bar plot plotting mean salary vs school type. Ivy leagues unsurprisingly have the highest mean salary and engineering schools unsurprisingly follow it. Liberal art schools have the longest SE mean bar likely due to the lower amount of obversations that are liberal art schools in this merged dataset.
+
+#### Concluding Remarks
+
+Overall, I am not surprised by the results of the data, but it is still interesting to look at the numerical data and figure out how salaries correlate with ranks. I think this data might have been better managed since I am worried that some of the ways I handled the data can lead to fallacious results, but overall I thought it was good practice in applying what I had learned this semester.
+
